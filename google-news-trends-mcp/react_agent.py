@@ -15,6 +15,8 @@ from tools import get_trending_terms, get_news_by_keyword
 logger = logging.getLogger(__name__)
 
 
+# logging
+
 class ReActAgent:
     """LangChain ReAct agent with tool selection."""
 
