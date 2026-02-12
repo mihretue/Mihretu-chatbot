@@ -10,6 +10,6 @@ COPY . .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir .
 
-ENV PORT=8080
+ENV PORT=5000
 
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
