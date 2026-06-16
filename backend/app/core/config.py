@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str
     
     # Tavily Configuration
-    tavily_api_key: str
+    tavily_api_key: Optional[str] = None
+
+    # SerpAPI Configuration (for Google Trends)
+    serpapi_key: Optional[str] = None
     
     # OpenAI Configuration (optional, for backward compatibility)
     openai_api_key: Optional[str] = None

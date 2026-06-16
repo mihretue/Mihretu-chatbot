@@ -1,181 +1,151 @@
 import logging
+import asyncio
 from typing import Dict, Any
-from pytrends.request import TrendReq
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class GoogleTrendsMCPTool:
-    """Wrapper for Google Trends data using pytrends."""
+    """Google Trends via SerpAPI with graceful fallback when unavailable."""
 
-    def __init__(self):
-        """Initialize Google Trends tool."""
-        self.pytrends = TrendReq(hl='en-US', tz=360)
+    def _get_client(self):
+        """Return SerpAPI GoogleSearch class, or None if key not configured."""
+        if not settings.serpapi_key:
+            return None
+        try:
+            from serpapi import GoogleSearch
+            return GoogleSearch
+        except ImportError:
+            logger.error("google-search-results package not installed")
+            return None
+
+    def _fetch_trending(self, geo: str) -> Dict[str, Any]:
+        """Synchronous SerpAPI call for trending searches."""
+        GoogleSearch = self._get_client()
+        if not GoogleSearch:
+            return {"success": False, "error": "SerpAPI key not configured"}
+
+        params = {
+            "engine": "google_trends_trending_now",
+            "geo": geo,
+            "api_key": settings.serpapi_key,
+        }
+        result = GoogleSearch(params).get_dict()
+
+        if "error" in result:
+            return {"success": False, "error": result["error"]}
+
+        trending = result.get("trending_searches", [])
+        trends = [
+            {"keyword": item.get("query", ""), "rank": idx + 1}
+            for idx, item in enumerate(trending)
+        ]
+        return {"success": True, "geo": geo, "trends": trends}
+
+    def _fetch_related_queries(self, keyword: str, max_results: int) -> Dict[str, Any]:
+        """Synchronous SerpAPI call for related queries."""
+        GoogleSearch = self._get_client()
+        if not GoogleSearch:
+            return {"success": False, "keyword": keyword, "error": "SerpAPI key not configured"}
+
+        params = {
+            "engine": "google_trends",
+            "q": keyword,
+            "data_type": "RELATED_QUERIES",
+            "api_key": settings.serpapi_key,
+        }
+        result = GoogleSearch(params).get_dict()
+
+        if "error" in result:
+            return {"success": False, "keyword": keyword, "error": result["error"]}
+
+        top = result.get("related_queries", {}).get("top", [])
+        articles = [
+            {
+                "title": f"Trending: {item.get('query', '')}",
+                "url": f"https://trends.google.com/trends/explore?q={item.get('query', '')}",
+                "summary": f"Interest: {item.get('value', 'N/A')}",
+            }
+            for item in top[:max_results]
+        ]
+        return {"success": True, "keyword": keyword, "articles": articles}
 
     async def get_trending_terms(self, geo: str = "US") -> Dict[str, Any]:
-        """
-        Get trending terms from Google Trends.
-        
-        Args:
-            geo: Geographic region (default: US)
-            
-        Returns:
-            Dictionary with trending terms
-        """
-        try:
-            logger.info(f"Fetching trending terms for geo={geo}")
-            
-            # Get trending searches for the specified region
-            trending_searches = self.pytrends.trending_searches(pn=geo)
-            
-            # Convert to list of dictionaries
-            trends = [
-                {"keyword": keyword, "rank": idx + 1}
-                for idx, keyword in enumerate(trending_searches[0].values)
-            ]
-            
-            logger.info(f"Trending terms fetched successfully: {len(trends)} trends")
-            
-            return {
-                "success": True,
-                "geo": geo,
-                "trends": trends,
-                "raw_response": trending_searches,
-            }
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Trends error: {error_msg}")
+        """Get trending terms — SerpAPI with graceful fallback."""
+        if not settings.serpapi_key:
+            logger.warning("SERPAPI_KEY not set — Google Trends unavailable")
             return {
                 "success": False,
-                "error": error_msg,
+                "error": "Google Trends is not configured (missing SERPAPI_KEY). Falling back to LLM knowledge.",
                 "trends": [],
             }
+        try:
+            logger.info(f"Fetching trending terms via SerpAPI for geo={geo}")
+            result = await asyncio.to_thread(self._fetch_trending, geo)
+            if result["success"]:
+                logger.info(f"Fetched {len(result['trends'])} trends")
+            else:
+                logger.warning(f"SerpAPI trends failed: {result.get('error')}")
+            return result
+        except Exception as e:
+            logger.error(f"Trends error: {e}")
+            return {"success": False, "error": str(e), "trends": []}
 
     async def get_news_by_keyword(self, keyword: str, max_results: int = 5) -> Dict[str, Any]:
-        """
-        Get news articles by keyword using Google Trends.
-        
-        Args:
-            keyword: Search keyword
-            max_results: Maximum number of results
-            
-        Returns:
-            Dictionary with news articles
-        """
-        try:
-            logger.info(f"Fetching news for keyword={keyword}")
-            
-            # Get related queries for the keyword
-            self.pytrends.build_payload([keyword], timeframe='today 1m')
-            related_queries = self.pytrends.related_queries()
-            
-            # Extract top queries
-            top_queries = related_queries.get(keyword, {}).get('top', [])
-            
-            articles = [
-                {
-                    "title": f"Trending: {query['query']}",
-                    "url": f"https://trends.google.com/trends/explore?q={query['query']}",
-                    "summary": f"Interest: {query['value']}"
-                }
-                for query in top_queries[:max_results]
-            ]
-            
-            logger.info(f"News fetched successfully")
-            
-            return {
-                "success": True,
-                "keyword": keyword,
-                "articles": articles,
-                "raw_response": related_queries,
-            }
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"News error: {error_msg}")
+        """Get related queries for a keyword — SerpAPI with graceful fallback."""
+        if not settings.serpapi_key:
+            logger.warning("SERPAPI_KEY not set — Google Trends unavailable")
             return {
                 "success": False,
                 "keyword": keyword,
-                "error": error_msg,
+                "error": "Google Trends is not configured (missing SERPAPI_KEY). Falling back to LLM knowledge.",
                 "articles": [],
             }
+        try:
+            logger.info(f"Fetching related queries via SerpAPI for keyword={keyword}")
+            result = await asyncio.to_thread(self._fetch_related_queries, keyword, max_results)
+            if result["success"]:
+                logger.info(f"Fetched {len(result['articles'])} related queries")
+            else:
+                logger.warning(f"SerpAPI related queries failed: {result.get('error')}")
+            return result
+        except Exception as e:
+            logger.error(f"News error: {e}")
+            return {"success": False, "keyword": keyword, "error": str(e), "articles": []}
 
     def format_trends(self, trends_result: Dict[str, Any]) -> str:
-        """
-        Format trending terms for agent consumption.
-        
-        Args:
-            trends_result: Raw trends result
-            
-        Returns:
-            Formatted string for agent
-        """
+        """Format trending terms for agent consumption."""
         if not trends_result["success"]:
-            return f"Trends fetch failed: {trends_result['error']}"
-        
+            return f"Google Trends unavailable: {trends_result['error']}"
+
         formatted = f"Google Trends ({trends_result['geo']}):\n\n"
-        
-        if trends_result["trends"]:
-            for i, trend in enumerate(trends_result["trends"][:10], 1):
-                if isinstance(trend, dict):
-                    keyword = trend.get("keyword", "No keyword")
-                    rank = trend.get("rank", "N/A")
-                    formatted += f"{i}. {keyword} (Rank: {rank})\n"
-                else:
-                    formatted += f"{i}. {trend}\n"
-        else:
-            formatted += "No trends data available."
-        
-        return formatted
+        for i, trend in enumerate(trends_result["trends"][:10], 1):
+            formatted += f"{i}. {trend.get('keyword', '')} (Rank: {trend.get('rank', i)})\n"
+        return formatted or "No trends data available."
 
     def format_news(self, news_result: Dict[str, Any]) -> str:
-        """
-        Format news articles for agent consumption.
-        
-        Args:
-            news_result: Raw news result
-            
-        Returns:
-            Formatted string for agent
-        """
+        """Format related queries for agent consumption."""
         if not news_result["success"]:
-            return f"News fetch failed: {news_result['error']}"
-        
-        formatted = f"News Articles for '{news_result['keyword']}':\n\n"
-        
-        if news_result["articles"]:
-            for i, article in enumerate(news_result["articles"][:5], 1):
-                if isinstance(article, dict):
-                    title = article.get("title", "No title")
-                    url = article.get("url", "")
-                    summary = article.get("summary", "")
-                    formatted += f"{i}. {title}\n"
-                    if summary:
-                        formatted += f"   {summary}\n"
-                    if url:
-                        formatted += f"   URL: {url}\n"
-                    formatted += "\n"
-                else:
-                    formatted += f"{i}. {article}\n"
-        else:
-            formatted += "No articles found."
-        
-        return formatted
+            return f"Google Trends unavailable: {news_result['error']}"
+
+        formatted = f"Related searches for '{news_result['keyword']}':\n\n"
+        for i, article in enumerate(news_result["articles"][:5], 1):
+            formatted += f"{i}. {article.get('title', '')}\n"
+            if article.get("summary"):
+                formatted += f"   {article['summary']}\n"
+            if article.get("url"):
+                formatted += f"   URL: {article['url']}\n"
+            formatted += "\n"
+        return formatted or "No related searches found."
 
     async def health_check(self) -> bool:
-        """
-        Check if tool is healthy.
-        
-        Returns:
-            True if healthy, False otherwise
-        """
-        try:
-            logger.info("Google Trends tool health check")
-            # Try to fetch trending searches to verify connectivity
-            self.pytrends.trending_searches(pn='US')
-            return True
-        except Exception as e:
-            logger.warning(f"Health check failed: {str(e)}")
+        """Returns True if SerpAPI key is configured, False otherwise."""
+        if not settings.serpapi_key:
+            logger.warning("Google Trends health check: SERPAPI_KEY not set")
             return False
+        return True
 
 
 # Global instance
