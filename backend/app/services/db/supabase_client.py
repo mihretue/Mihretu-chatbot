@@ -10,17 +10,26 @@ class SupabaseClient:
     """Wrapper for Supabase client operations."""
 
     def __init__(self):
-        """Initialize Supabase client."""
-        # Use service role key for admin operations
+        """Initialize Supabase client with two connections:
+        - auth_client: anon key for auth operations (sign up, sign in)
+        - client: service role key for DB operations (bypasses RLS)
+        """
+        self.auth_client: Client = create_client(
+            settings.supabase_url,
+            settings.supabase_key,
+        )
+        service_key = settings.supabase_service_key or settings.supabase_key
+        if not settings.supabase_service_key:
+            logger.warning("SUPABASE_SERVICE_KEY not set — DB operations will use anon key and may fail due to RLS")
         self.client: Client = create_client(
             settings.supabase_url,
-            settings.supabase_key,  # This should be the service role key
+            service_key,
         )
 
     def create_user(self, email: str, password: str) -> Dict[str, Any]:
         """Create a new user in Supabase Auth."""
         try:
-            response = self.client.auth.sign_up({
+            response = self.auth_client.auth.sign_up({
                 "email": email,
                 "password": password,
             })
@@ -38,7 +47,7 @@ class SupabaseClient:
         try:
             logger.info(f"[AUTH] Starting authentication for email: {email}")
             
-            response = self.client.auth.sign_in_with_password({
+            response = self.auth_client.auth.sign_in_with_password({
                 "email": email,
                 "password": password,
             })
@@ -78,7 +87,7 @@ class SupabaseClient:
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user by ID."""
         try:
-            response = self.client.auth.admin.get_user(user_id)
+            response = self.auth_client.auth.admin.get_user(user_id)
             return response.user
         except Exception as e:
             logger.error(f"Error getting user: {str(e)}")

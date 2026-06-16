@@ -35,10 +35,10 @@ def _classify_intent(query: str) -> str:
     is_trend = any(k in q for k in _TREND_KEYWORDS)
     is_search = any(k in q for k in _SEARCH_KEYWORDS)
 
-    if is_trend and not is_search:
+    if is_trend:
+        # trend wins even when both signals present — "trending right now" is clearly a trends query
         return "trends"
     if is_search:
-        # search is more general-purpose; wins when both signals present
         return "search"
     return "general"
 

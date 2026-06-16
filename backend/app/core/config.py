@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     
     # Supabase Configuration
     supabase_url: str
-    supabase_key: str
+    supabase_key: str               # anon key (used for auth operations)
+    supabase_service_key: Optional[str] = None  # service role key (bypasses RLS for DB operations)
     supabase_jwt_secret: str
     
     # Tavily Configuration
