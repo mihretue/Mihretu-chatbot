@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     port: int = 8000
     
     # CORS Configuration
-    cors_origins: List[str] = ["http://localhost:3000", "http://frontend:3000","http://localhost:3001","https://mihretu-chatbot.onrender.com"]
+    cors_origins: List[str] = ["http://localhost:3000", "http://frontend:3000","http://localhost:3001","https://mihretu-chatbot.vercel.app/login"]
     
     # Agent Configuration
     agent_max_iterations: int = 10
